@@ -8,6 +8,7 @@ namespace Samples.CSharp
         void RunNBodySim(deviceptr<float4> newPos,
                        deviceptr<float4> oldPos,
                        deviceptr<float4> vel,
+                       deviceptr<float4> color,
                        int numBodies,
                        float deltaTime,
                        float softeningSquared,

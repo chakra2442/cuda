@@ -21,8 +21,8 @@ namespace Samples.CSharp
         private ISimulator _simulator;
         private readonly uint[] _buffers;
         private readonly DeviceMemory<float4> _vel;
-
-        //private readonly DeviceMemory<int3> _color;
+        private readonly DeviceMemory<float4> _color;
+        
         //private readonly uint colorBuffer;
 
         private readonly IntPtr[] _resources;
@@ -124,18 +124,20 @@ namespace Samples.CSharp
             }
 
             _vel = _gpu.AllocateDevice<float4>(_numBodies);
+            _color = _gpu.AllocateDevice<float4>(_numBodies);
 
-            float4[] hpos, hvel, hcol;
+            float4[] hpos, hvel, hcol, hcolrand;
             BodyInitializer.Initialize(new BodyInitializerImpl(), clusterScale, velocityScale, _numBodies, out hpos, out hvel, out hcol);
+
+            hcolrand = Enumerable.Range(0, _numBodies).Select(new BodyInitializerImpl().RColor).ToArray();
             Gpu.Copy(hvel, 0L, _gpu, _vel.Ptr, hvel.Length);
-
-
-
-            // _color = _gpu.AllocateDevice<int3>(_numBodies);
+            Gpu.Copy(hcol, 0L, _gpu, _color.Ptr, hcol.Length);
 
             GL.BindBuffer(BufferTarget.ArrayBuffer, _buffers[2]);
             GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(Marshal.SizeOf(typeof(float4)) * _numBodies), hcol, BufferUsageHint.DynamicDraw);
-            // Gpu.Copy(colors, 0L, _gpu, _color.Ptr, _numBodies);
+
+            GL.BindBuffer(BufferTarget.ArrayBuffer, _buffers[3]);
+            GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(Marshal.SizeOf(typeof(float4)) * _numBodies), hcolrand, BufferUsageHint.DynamicDraw);
 
             LockPos((pos0, pos1) => Gpu.Copy(hpos, 0L, _gpu, pos1, hpos.Length));
             Description();
@@ -147,6 +149,11 @@ namespace Samples.CSharp
             var buffer = _buffers[0];
             _buffers[0] = _buffers[1];
             _buffers[1] = buffer;
+
+            var buffer2 = _buffers[2];
+            _buffers[2] = _buffers[3];
+            _buffers[3] = buffer2;
+
 
             var resource = _resources[0];
             _resources[0] = _resources[1];
@@ -185,6 +192,7 @@ namespace Samples.CSharp
                 if (disposing)
                 {
                     _vel.Dispose();
+                    _color.Dispose();
                 }
             }
             catch { }
@@ -223,7 +231,7 @@ namespace Samples.CSharp
 
             SwapPos();
             LockPos((pos0, pos1) =>
-                _simulator.RunNBodySim(pos1, pos0, _vel.Ptr, _numBodies, _deltaTime, _softeningSquared, _damping));
+                _simulator.RunNBodySim(pos1, pos0, _vel.Ptr, _color.Ptr, _numBodies, _deltaTime, _softeningSquared, _damping));
 
             GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             var modelview = Matrix4.LookAt(Vector3.Zero, Vector3.UnitZ, Vector3.UnitY);

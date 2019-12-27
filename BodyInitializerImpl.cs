@@ -58,6 +58,15 @@ namespace Samples.CSharp
         public override float4 Color(int i)
         {
             var r = (float)(_random.NextDouble());
+            var g = 0.0f;//(float)(_random.NextDouble());
+            var b = 0.0f; //(float)(_random.NextDouble());
+            var w = (float)(_random.NextDouble());
+            return new float4(r, g, b, w);
+        }
+
+        public override float4 RColor(int i)
+        {
+            var r = (float)(_random.NextDouble());
             var g = (float)(_random.NextDouble());
             var b = (float)(_random.NextDouble());
             var w = (float)(_random.NextDouble());

@@ -11,6 +11,7 @@ namespace Samples.CSharp
         abstract public float VScale { get; set; }
         public abstract float4 Position(int i);
         public abstract float4 Color(int i);
+        public abstract float4 RColor(int i);
         public abstract float4 Velocity(float4 position, int i);
 
         static float4 Momentum(float4 velocity)
