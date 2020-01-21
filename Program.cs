@@ -1,178 +1,133 @@
 ﻿using Alea;
-using Alea.CSharp;
+using Alea.cuRAND;
 using Alea.Parallel;
 using NUnit.Framework;
 using Samples.CSharp;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace CUDATest
 {
 
-    class Program
+    class Program2
     {
         static void Main(string[] args)
         {
-            //DeviceDetails.Print();
-
-            //DeviceDetails.PrintGridBlock();
-
-            // ParallelForTest.GPUParallelFor();
-            // ParallelForChainingTest.ChainLambdas();
-
-            //for (int i = 0; i < 1000; i++)
+            Sim.Start();
+            // PseudoRandomSamplingWithOffset();
+            //var gpu = Gpu.Default;
+            //gpu.Context.SetCurrent();
+            //using (var window = new SimWindow(gpu, 0.001f))
             //{
-            //    TransformTest.Run();
-            //    Console.WriteLine(i);
+            //    window.Run();
             //}
-
-
-            var gb = 0.1f;
-            
-            if (args.Length > 0)
-            {
-                float.TryParse(args[0], out gb);
-                Console.WriteLine(gb);
-            }
-
-            var list = new List<Task>();
-            list.Add(Task.Run(() =>
-            {
-                var gpu = Gpu.Default;
-                gpu.Context.SetCurrent();
-                using (var window = new SimWindow(gpu, gb))
-                {
-                    window.Run();
-                }
-            }));
-
-            //list.Add(Task.Run(() =>
-            //{
-            //    var gpu = Gpu.Default;
-            //    gpu.Context.SetCurrent();
-            //    using (var window = new SimWindow(gpu, 0.001f))
-            //    {
-            //        window.Run();
-            //    }
-            //}));
-
-            Task.WaitAll(list.ToArray());
-
-            //using (var tw = new TestWindow())
-            //{
-            //    tw.Run(150.0);
-            //}
-
-        }
-    }
-
-    class TransformTest
-    {
-        private const int Length = 1000000;
-
-        private static void Kernel(int[] result, int[] arg1, int[] arg2)
-        {
-            var start = blockIdx.x * blockDim.x + threadIdx.x;
-            var stride = gridDim.x * blockDim.x;
-            for (var i = start; i < result.Length; i += stride)
-            {
-                result[i] = arg1[i] + arg2[i];
-            }
         }
 
         [GpuManaged, Test]
-        public static void Run()
+        public static void PseudoRandomSamplingWithOffset()
         {
-            var gpu = Gpu.Default;
-            var lp = new LaunchParam(16, 256);
-            var arg1 = Enumerable.Range(0, Length).ToArray();
-            var arg2 = Enumerable.Range(0, Length).ToArray();
-            var result = new int[Length];
-            gpu.Launch(Kernel, lp, result, arg1, arg2);
-        }
-    }
-
-    class DeviceDetails
-    {
-        public static void Print()
-        {
-            var devices = Device.Devices;
-            var numGpus = devices.Length;
-            foreach (var device in devices)
+            var numBlocks = 4;
+            var numSamplesPerBlock = 1 << 16;
+            using (var rng = Generator.CreateCpu(RngType.PSEUDO_MRG32K3A))
             {
-                device.Print();
+                var gaussian = new double[numSamplesPerBlock];
+                var poisson = new UInt32[numSamplesPerBlock];
 
-                // note that device ids for all GPU devices in a system does not need to be continuous
-                var id = device.Id;
-                var arch = device.Arch;
-                var numMultiProc = device.Attributes.MultiprocessorCount;
+                rng.SetPseudoRandomGeneratorSeed(42L);
+
+                for (var block = 0; block < numBlocks; block++)
+                {
+                    rng.SetGeneratorOffset((ulong)block * (ulong)(numSamplesPerBlock));
+                    rng.GenerateNormal(gaussian, 0, 1);
+                    rng.GeneratePoisson(poisson, 1.0);
+
+                    var sampleMeanGaussian = gaussian.Average();
+                    Assert.That(sampleMeanGaussian, Is.EqualTo(0).Within(1e-2));
+
+                    var sampleMeanPoisson = poisson.Select(p => (double)p).Average();
+                    Assert.That(sampleMeanPoisson, Is.EqualTo(1.0).Within(1e-2));
+                }
             }
         }
-
-        public static void PrintGridBlock()
-        {
-            Gpu.Default.Launch(() => Console.WriteLine("block index {0}, thread index {1}", blockIdx.x, threadIdx.x), new LaunchParam(16, 64));
-            Console.Write("Press Enter to quit...");
-            Console.ReadKey();
-        }
     }
 
-    class ParallelForTest
+    class Program
     {
-        private const int Length = 1000000;
-
-        public static void GPUParallelFor()
+        static void Main2(string[] args)
         {
-            var arg1 = Enumerable.Range(0, Length).ToArray();
-            var arg2 = Enumerable.Range(0, Length).ToArray();
-            var result = new int[Length];
+            foreach (var device in Device.Devices)
+            {
+                Console.WriteLine($"{device.Id} : {device.Name} [{device.Attributes.ComputeCapabilityMajor}.{device.Attributes.ComputeCapabilityMinor}] {device.TotalMemory / 1024 / 1024}MB");
+            }
 
-            var watch = Stopwatch.StartNew();
-            Parallel.For(0, result.Length, i => result[i] = arg1[i] + arg2[i]);
-            var tCpu = watch.Elapsed;
+            Console.WriteLine($"Default GPU: {Device.Default.Id}");
 
-            watch.Restart();
-            Gpu.Default.For(0, result.Length, i => result[i] = arg1[i] + arg2[i]);
-            var tGpu = watch.Elapsed;
+            try
+            {
+                var deviceId = 0;
+                var numIters = 4;
+                var numBatches = 8;
+                var numSamplesPerBatch = (1 << 20) * 10;
+                var showProgress = true;
+                var doMultiGpuTest = false;
 
-            watch.Restart();
-            Action<int> op = i => result[i] = arg1[i] + arg2[i];
-            Gpu.Default.For(0, arg1.Length, op);
-            var tGpuA = watch.Elapsed;
+                //if (args.Length > 0)
+                //{
+                //    deviceId = Int32.Parse(args[0]);
+                //}
+                //else
+                //{
+                //    var deviceIds = Device.Devices.Select(device => device.Id);
+                //    Console.Write("Select device id [");
+                //    Console.Write(String.Join(", ", deviceIds.Select(id => id.ToString())));
+                //    Console.Write("] : ");
+                //    deviceId = Convert.ToInt32(Console.ReadLine());
+                //}
 
-            watch.Restart();
-            Func<int[], Action<int>> opFactory = res => i => res[i] = arg1[i] + arg2[i];
-            Gpu.Default.For(0, arg1.Length, opFactory(result));
-            var tGpuF = watch.Elapsed;
+                //if (args.Length > 1)
+                //{
+                //    doMultiGpuTest = Int32.Parse(args[1]) != 0;
+                //}
+                //else
+                //{
+                //    Console.Write("Do multi-GPU test? [0|1] : ");
+                //    doMultiGpuTest = Convert.ToInt32(Console.ReadLine()) != 0;
+                //}
 
-            Console.WriteLine($"{Length} : CPU :{tCpu.TotalMilliseconds}, GPU : {tGpu.TotalMilliseconds}, GPUA : {tGpuA.TotalMilliseconds}, GPUF : {tGpuF.TotalMilliseconds}");
-        }
-    }
+                //if (args.Length > 2)
+                //{
+                //    numBatches = Int32.Parse(args[2]);
+                //}
+                //else
+                //{
+                //    Console.Write("Number of batches : ");
+                //    numBatches = Convert.ToInt32(Console.ReadLine());
+                //}
 
-    class ParallelForChainingTest
-    {
-        private const int Length = 1000000;
+                //if (args.Length > 3)
+                //{
+                //    showProgress = Int32.Parse(args[3]) != 0;
+                //}
+                //else
+                //{
+                //    Console.Write("Show progress? [0|1] : ");
+                //    showProgress = Convert.ToInt32(Console.ReadLine()) != 0;
+                //}
 
-        public static void ChainLambdas()
-        {
-            var gpu = Gpu.Default;
-            var arg1 = Enumerable.Range(0, Length).ToArray();
-            var arg2 = Enumerable.Range(0, Length).ToArray();
-            var arg3 = Enumerable.Range(0, Length).ToArray();
-            var result = new int[Length];
+                Console.WriteLine();
 
-            var watch = Stopwatch.StartNew();
-            Parallel.For(0, result.Length, i => result[i] = (arg1[i] + arg2[i])* arg3[i] );
-            var tCpu = watch.Elapsed;
-
-            watch.Restart();
-            gpu.For(0, result.Length, i => result[i] = arg1[i] + arg2[i]);
-            gpu.For(0, result.Length, i => result[i] = result[i] * arg3[i]);
-            var tGpu = watch.Elapsed;
-            Console.WriteLine($"{Length} : CPU :{tCpu.TotalMilliseconds}, GPU : {tGpu.TotalMilliseconds}");
+                var selected = Device.Devices.ToList().Find(device => device.Id == deviceId);
+                if (showProgress) numIters = 1;
+                FinanceAsianOptionMonteCarlo.ShowProgress = showProgress;
+                FinanceAsianOptionMonteCarlo.DoMultiGpuTest = doMultiGpuTest;
+                FinanceAsianOptionMonteCarlo.Run(selected, numIters, numBatches, numSamplesPerBatch);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"exception {ex.Message}");
+            }
         }
     }
 }
